@@ -9,6 +9,7 @@ import sys
 import numpy as np
 from tensorflow.examples.tutorials.mnist import input_data
 from tensorflow.contrib.tensorboard.plugins import projector
+from tensorflow.python.training.monitored_session import MonitoredTrainingSession
 import tensorflow as tf
 
 FLAGS = None
@@ -42,10 +43,12 @@ def main(_):
         tf.nn.softmax_cross_entropy_with_logits(labels=y_, logits=y))
     tf.summary.scalar('loss', cross_entropy)
 
-    train_step = tf.train.GradientDescentOptimizer(0.5).minimize(cross_entropy)
+    global_step = tf.Variable(0, name='global_step', trainable=False)
 
-    sess = tf.InteractiveSession()
-    tf.global_variables_initializer().run()
+    train_step = tf.train.GradientDescentOptimizer(0.5).minimize(cross_entropy, global_step=global_step)
+
+    correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(y_, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
     # Train
     summary_op = tf.summary.merge_all()
@@ -65,31 +68,24 @@ def main(_):
         fd.write("\n".join(map(lambda x: str(x),
                                np.argmax(mnist.test.labels, 1))))
 
-    saver = tf.train.Saver()
+    with MonitoredTrainingSession(checkpoint_dir=LOG_DIR,
+                                  save_checkpoint_secs=1) as sess:
+        for step in range(1000):
+            if sess.should_stop():
+                break
 
-    for step in range(1001):
-        batch_xs, batch_ys = mnist.train.next_batch(100)
-        _, _, summary = sess.run([train_step, test_data, summary_op],
-                              feed_dict={x: batch_xs, y_: batch_ys})
-        if step % 10 == 0:
-            summary_writer.add_summary(summary, step)
+            batch_xs, batch_ys = mnist.train.next_batch(100)
+            _, _, summary = sess.run([train_step, test_data, summary_op],
+                                  feed_dict={x: batch_xs, y_: batch_ys})
 
-        if step % 100 == 0:
-            saver.save(sess, os.path.join(LOG_DIR, "model.ckpt"), step)
-
-    summary_writer.close()
-
-    # Test trained model
-    correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(y_, 1))
-    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    print(sess.run(accuracy, feed_dict={x: mnist.test.images,
-                                        y_: mnist.test.labels}))
+        print(sess.run(accuracy, feed_dict={x: mnist.test.images,
+                                            y_: mnist.test.labels}))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str,
-                        default='/tmp/tensorflow/mnist/input_data',
+                        default='./mnist/input_data',
                         help='Directory for storing input data')
 
     FLAGS, unparsed = parser.parse_known_args()
